@@ -1,0 +1,2 @@
+{:bbin/bin {zed-clojure-eval {:main-opts ["-m" "zed-clojure-eval"]}},
+ :paths ["src"]}
