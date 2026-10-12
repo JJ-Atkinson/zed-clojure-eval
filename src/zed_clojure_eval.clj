@@ -156,6 +156,10 @@
                                             :render-status-line
                                             compile-lambda
                                             "Top-level :render-status-line")
+      (seq? (:update-state-after-evaluation config))
+        (update :update-state-after-evaluation
+                compile-lambda
+                "Top-level :update-state-after-evaluation")
       (:snippets config)
         (update :snippets
                 (fn [snippets]
@@ -505,8 +509,8 @@
     (vec values)))
 
 (defn target-display
-  [{:keys [target-name endpoint]}]
-  (or target-name (:port endpoint)))
+  [{:keys [display-name target-name endpoint]}]
+  (or display-name target-name (:port endpoint)))
 
 (defn status-context
   [ambient evaluation timestamp phase]
@@ -722,6 +726,14 @@
                {})))
     content))
 
+(defn state-map-after-evaluation
+  [config context]
+  (if-let [update-state (:update-state-after-evaluation config)]
+    (let [updated-state-map (update-state context)]
+      (serialize-state-map updated-state-map)
+      updated-state-map)
+    (:state-map context)))
+
 (defn snippet-by-name
   [config snippet-name]
   (or (get-in config [:snippets snippet-name])
@@ -768,7 +780,8 @@
          (status-evaluation []
            (let [{:keys [name options]}
                    (resolve-target config (current-context) (:target config))]
-             {:target-name name,
+             {:display-name (:display-name options),
+              :target-name name,
               :endpoint (when-not name (endpoint-for-target endpoint options)),
               :namespace (or (:namespace options) namespace)}))
          (render-status [phase evaluation]
@@ -791,6 +804,29 @@
            (atomic-write! state-file (serialize-state-map new-state-map))
            (reset! state-map new-state-map)
            (render-status! :state-changed (status-evaluation)))
+         (update-state-after-evaluation! [evaluation result]
+           (if-not (:update-state-after-evaluation config)
+             result
+             (try (let [context (status-context (current-context)
+                                                (assoc evaluation
+                                                  :result result)
+                                                (Instant/now)
+                                                :resolved)
+                        updated-state-map (state-map-after-evaluation config
+                                                                      context)]
+                    (when (not= updated-state-map @state-map)
+                      (atomic-write! state-file
+                                     (serialize-state-map updated-state-map))
+                      (reset! state-map updated-state-map))
+                    result)
+                  (catch Exception exception
+                    (-> result
+                        (update :exceptions
+                                conj
+                                (str "State update after evaluation failed: "
+                                     (ex-message exception)))
+                        (update :statuses conj "state-error")
+                        (assoc :failed? true))))))
          (evaluate-against-port
            ([snippet-code]
             (evaluate-against-port (:target config) snippet-code))
@@ -818,6 +854,7 @@
                               :evaluated-at (Instant/now),
                               :format-warning warning,
                               :pending-id (invisible-evaluation-id),
+                              :display-name (:display-name target-options),
                               :target-name name,
                               :namespace target-namespace}
                   pending-entry (format-pending-entry evaluation)
@@ -846,9 +883,11 @@
                                  :exceptions [(ex-message exception)],
                                  :statuses #{"connection-error"},
                                  :failed? true}))
+                  result (update-state-after-evaluation! evaluation result)
                   {displayed-values :values, result-warnings :warnings}
                     (format-values config (:values result))
                   evaluation (assoc evaluation
+                               :context (current-context)
                                :displayed-values displayed-values
                                :result result
                                :result-format-warning

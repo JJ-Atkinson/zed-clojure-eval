@@ -89,7 +89,7 @@
     (is (= [{:target :node}] @states))))
 
 (deftest resolves-fixed-targets
-  (let [config {:targets {:jvm {:port 9000}}}
+  (let [config {:targets {:jvm {:display-name :clj, :port 9000}}}
         named (evaluator/resolve-target config {} :jvm)
         anonymous (evaluator/resolve-target config {} {:port 9001})
         automatic (evaluator/resolve-target
@@ -97,7 +97,11 @@
                     {:file "example.cljs"}
                     (fn [{:keys [file]}]
                       (if (.endsWith file ".cljs") :jvm nil)))]
-    (is (= {:name :jvm, :options {:port 9000}} named))
+    (is (= {:name :jvm, :options {:display-name :clj, :port 9000}} named))
+    (is (= :clj
+           (evaluator/target-display {:display-name
+                                        (get-in named [:options :display-name]),
+                                      :target-name (:name named)})))
     (is (= {:name nil, :options {:port 9001}} anonymous))
     (is (= named automatic))
     (is (= 9000
@@ -148,6 +152,24 @@
                         #":targets must map names to target maps"
                         (evaluator/compile-config
                           {:targets {:dynamic '(fn [_] :jvm)}}))))
+
+(deftest updates-state-after-an-evaluation
+  (let
+    [config
+       (evaluator/compile-config '{:update-state-after-evaluation
+                                     (fn
+                                      [{:keys [state-map target]}]
+                                      (assoc state-map :runtime target))})]
+    (is (= {:other "preserved", :runtime :cljs}
+           (evaluator/state-map-after-evaluation
+             config
+             {:state-map {:other "preserved"}, :target :cljs}))))
+  (is (thrown-with-msg? Exception
+                        #"requires EDN-readable values"
+                        (evaluator/state-map-after-evaluation
+                          {:update-state-after-evaluation (fn [_]
+                                                            {:invalid (fn [])})}
+                          {:state-map {}}))))
 
 (deftest permits-a-target-without-a-default-port
   (fs/with-temp-dir

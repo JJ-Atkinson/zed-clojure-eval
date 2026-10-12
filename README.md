@@ -73,6 +73,10 @@ winning.
  {:command "zprint"
   :arguments []}
 
+ :update-state-after-evaluation
+ (fn [{:keys [state-map target]}]
+   (assoc state-map :last-target target))
+
  :render-status-line
  (fn [{:keys [phase target]}]
    (str "Status: " (name phase)
@@ -96,7 +100,8 @@ designated configuration positions execute as Babashka code.
 
 `:targets` maps names to fixed target maps. Target maps support `:host`,
 `:port`, `:port-file`, `:namespace`, `:namespace-form`,
-`:setup-namespace?`, and `:setup-code`.
+`:setup-namespace?`, `:setup-code`, and `:display-name`. A display name changes
+the target shown in status and evaluation markers without changing routing.
 
 The top-level `:target` is a target keyword, an anonymous target map, a literal
 function receiving the context map, or `nil`. When omitted or `nil`, normal
@@ -136,6 +141,12 @@ The context map contains:
 `set-state-map!` atomically persists a complete replacement map. State defaults
 to `.zed/clojure-repl-state.edn`; top-level `:state-file` can override it. State
 must round-trip through `clojure.edn`.
+
+The optional top-level `:update-state-after-evaluation` function receives the
+status context after each nREPL evaluation. It must return the complete next
+state map. The context includes `:target`, `:result`, and all normal context
+fields. State-update failures preserve the evaluation output and report an
+error.
 
 ### Output
 
