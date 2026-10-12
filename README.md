@@ -45,8 +45,8 @@ The evaluator receives source context through environment variables:
 | `ZED_CLOJURE_CONFIG` | explicit configuration path |
 
 When no port override is supplied, the evaluator searches the source file's
-ancestors for `.nrepl-port`. Output defaults to `.zed/repl.repl` in the project
-root.
+ancestors for `.nrepl-port`. Output defaults to `$PWD/.zed/repl.repl`, independent
+of where the port file was discovered.
 
 The Zed Clojure extension supplies these values through its
 `Clojure: Evaluate form` runnable task.
@@ -163,8 +163,10 @@ The managed status receives `:phase`, `:target`, `:time`, `:namespace`,
 `:state-map`, and the optional `:result`. Phases are `:opened`, `:sent`,
 `:resolved`, and `:state-changed`.
 
-The formatter receives original source on stdin and changes display text only.
-The unformatted source is always sent to nREPL.
+The formatter receives the original source and each returned nREPL value on
+stdin in separate invocations. It changes display text only: the unformatted
+source is always sent to nREPL, and formatter failures preserve the unformatted
+value with a warning. Standard output and standard error are not formatted.
 
 Ignore these generated files in projects:
 

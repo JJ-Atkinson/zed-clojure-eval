@@ -161,6 +161,21 @@
       (is (= 9000
              (:port (evaluator/endpoint-for-target endpoint {:port 9000})))))))
 
+(deftest defaults-output-to-the-working-directory
+  (fs/with-temp-dir
+    [directory {}]
+    (let [source (fs/path directory "nested" "src" "core.clj")
+          port-file (fs/path directory "nested" ".nrepl-port")]
+      (fs/create-dirs (fs/parent source))
+      (spit (str source) "(ns example.core)")
+      (spit (str port-file) "7888")
+      (let [endpoint (evaluator/endpoint {"ZED_CLOJURE_FILE" (str source)})]
+        (is (= (str (fs/path (fs/normalize (fs/absolutize "."))
+                             ".zed"
+                             "repl.repl"))
+               (str (:output-file endpoint))))
+        (is (= (str (fs/parent port-file)) (str (:project-root endpoint))))))))
+
 (deftest recognizes-failed-namespace-responses
   (is (evaluator/failed-responses? [{"status" ["eval-error"],
                                      "ex" "missing dependency"}]))
@@ -206,6 +221,18 @@
   (is (= "abc"
          (:code (evaluator/format-code {:formatter {:command "does-not-exist"}}
                                        "abc")))))
+
+(deftest formats-returned-values-with-the-same-command
+  (is (= {:values ["ABC" "DEF"], :warnings []}
+         (evaluator/format-values {:formatter {:command "tr",
+                                               :arguments ["a-z" "A-Z"]}}
+                                  ["abc" "def"])))
+  (let [{:keys [values warnings]} (evaluator/format-values
+                                    {:formatter {:command "does-not-exist"}}
+                                    ["abc"])]
+    (is (= ["abc"] values))
+    (is (= 1 (count warnings)))
+    (is (str/starts-with? (first warnings) "Result 1: Formatter failed:"))))
 
 (deftest renders-a-status-line
   (let [config {:render-status-line
@@ -306,6 +333,7 @@
   (let [entry (evaluator/format-entry
                 {:context {:file "/tmp/core.clj", :line 8},
                  :displayed-code "(+ 1 2)",
+                 :displayed-values ["{:answer\n 42}"],
                  :endpoint {:port 7888},
                  :evaluated-at (Instant/parse "2026-01-01T00:00:00Z"),
                  :namespace "example.core",
@@ -319,7 +347,8 @@
     (is (re-find #"Evaluated in: example\.core" entry))
     (is (re-find #"\(\+ 1 2\)" entry))
     (is (re-find #";; hello" entry))
-    (is (re-find #"#_=>\n3" entry))))
+    (is (re-find #"#_=>\n\{:answer\n 42\}" entry))
+    (is (not (re-find #"#_=>\n3" entry)))))
 
 (deftest comments-every-formatter-warning-line
   (let [evaluation {:context {:file "/tmp/core.clj", :line 8},
@@ -329,6 +358,7 @@
                     :format-warning "first\nsecond",
                     :namespace "example.core",
                     :pending-id (evaluator/invisible-evaluation-id),
+                    :result-format-warning "third\nfourth",
                     :result {:out "",
                              :err "",
                              :values ["3"],
@@ -338,7 +368,9 @@
     (is (str/includes? (evaluator/format-pending-entry evaluation)
                        ";; first\n;; second"))
     (is (str/includes? (evaluator/format-entry evaluation)
-                       ";; first\n;; second"))))
+                       ";; first\n;; second"))
+    (is (str/includes? (evaluator/format-entry evaluation)
+                       ";; third\n;; fourth"))))
 
 (defn -main
   [& _]

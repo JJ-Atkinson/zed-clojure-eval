@@ -82,10 +82,10 @@
                          project-config-file (fs/parent (fs/parent
                                                           project-config-file))
                          :else (fs/absolutize "."))
-      output-file (if-let [output (not-empty (get environment
-                                                  "ZED_CLOJURE_OUTPUT_FILE"))]
-                    (fs/absolutize output)
-                    (fs/path project-root ".zed" "repl.repl"))]
+      output-file
+        (if-let [output (not-empty (get environment "ZED_CLOJURE_OUTPUT_FILE"))]
+          (fs/absolutize output)
+          (fs/path (fs/normalize (fs/absolutize ".")) ".zed" "repl.repl"))]
      {:host (or (not-empty (get environment "ZED_CLOJURE_NREPL_HOST"))
                 "127.0.0.1"),
       :port port,
@@ -493,6 +493,17 @@
               :warning (str "Formatter failed: " (ex-message exception))})))
     {:code code}))
 
+(defn format-values
+  [config values]
+  (reduce-kv
+    (fn [formatted index value]
+      (let [{formatted-value :code, :keys [warning]} (format-code config value)]
+        (cond-> (update formatted :values conj formatted-value)
+          warning
+            (update :warnings conj (str "Result " (inc index) ": " warning)))))
+    {:values [], :warnings []}
+    (vec values)))
+
 (defn target-display
   [{:keys [target-name endpoint]}]
   (or target-name (:port endpoint)))
@@ -549,8 +560,11 @@
            (remove #{\-} (str (UUID/randomUUID)))))))
 
 (defn format-entry
-  [{:keys [displayed-code format-warning result], :as evaluation}]
-  (let [{:keys [out err values exceptions statuses]} result]
+  [{:keys [displayed-code displayed-values format-warning result-format-warning
+           result],
+    :as evaluation}]
+  (let [{:keys [out err values exceptions statuses]} result
+        values (or displayed-values values)]
     (str (evaluation-marker evaluation)
          displayed-code
          "\n"
@@ -559,6 +573,8 @@
          (when-not (str/blank? out) (str ";; stdout\n" (commented out) "\n"))
          (when-not (str/blank? err) (str ";; stderr\n" (commented err) "\n"))
          (apply str (map #(str "#_=>\n" % "\n") values))
+         (when-not (str/blank? result-format-warning)
+           (str (commented result-format-warning) "\n"))
          (apply str (map #(str ";; exception: " % "\n") exceptions))
          (when (some failure-statuses statuses)
            (str ";; nREPL status: " (str/join ", " (sort statuses)) "\n"))
@@ -830,7 +846,14 @@
                                  :exceptions [(ex-message exception)],
                                  :statuses #{"connection-error"},
                                  :failed? true}))
-                  evaluation (assoc evaluation :result result)]
+                  {displayed-values :values, result-warnings :warnings}
+                    (format-values config (:values result))
+                  evaluation (assoc evaluation
+                               :displayed-values displayed-values
+                               :result result
+                               :result-format-warning
+                                 (when (seq result-warnings)
+                                   (str/join "\n" result-warnings)))]
               (swap! evaluations conj evaluation)
               (let [resolved-status (render-status :resolved evaluation)]
                 (replace-output-entry! (:output-file endpoint)
